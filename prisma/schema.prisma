@@ -1,0 +1,250 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GlobalRole {
+  SUPER_ADMIN
+  SUPPORT
+  NONE
+}
+
+enum CompanyRole {
+  ADMIN
+  USER
+  CUSTOMER_ADMIN
+  EMPLOYEE
+}
+
+enum LocationType {
+  WAREHOUSE
+  ZONE
+  AISLE
+  RACK
+  BIN
+}
+
+enum MovementType {
+  PURCHASE_IN
+  TRANSFER
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  SALE_OUT
+}
+
+enum CounterpartyType {
+  SUPPLIER
+  CUSTOMER
+  BORROWER
+}
+
+enum ReservationStatus {
+  ACTIVE
+  PICKED
+  QA_OK
+  CONSUMED
+  RELEASED
+  CANCELLED
+}
+
+model User {
+  id         Int        @id @default(autoincrement())
+  email      String     @unique
+  password   String
+  globalRole GlobalRole @default(NONE)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  companies CompanyUser[]
+  sessions  Session[]
+}
+
+model Company {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          CompanyUser[]
+  locations      Location[]
+  items          Item[]
+  movements      Movement[]
+  reservations   Reservation[]
+  balances       StockBalance[]
+  thresholds     StockThreshold[]
+  orderSequence  OrderSequence?
+  reservationQas ReservationQa[]
+}
+
+model CompanyUser {
+  id        Int         @id @default(autoincrement())
+  companyId Int
+  userId    Int
+  role      CompanyRole
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+}
+
+model Session {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  refreshToken String    @unique
+  lastUsedAt   DateTime? // <-- auth.service expects this
+  revokedAt    DateTime? // <-- auth.service expects this
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Location {
+  id          Int          @id @default(autoincrement())
+  code        String
+  name        String?
+  type        LocationType
+  parentId    Int?
+  companyId   Int
+  isReceiving Boolean      @default(false)
+  isDelivery  Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  company  Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent   Location?  @relation("LocationToChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children Location[] @relation("LocationToChildren")
+
+  balances      StockBalance[]
+  thresholds    StockThreshold[]
+  movementsFrom Movement[]       @relation("MovementFrom")
+  movementsTo   Movement[]       @relation("MovementTo")
+  reservations  Reservation[]
+
+  @@unique([companyId, code])
+}
+
+model Item {
+  id          Int      @id @default(autoincrement())
+  sku         String
+  name        String
+  description String?
+  oemNo       String?
+  companyId   Int
+  quantity    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company      Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  balances     StockBalance[]
+  thresholds   StockThreshold[]
+  movements    Movement[]
+  reservations Reservation[]
+
+  @@unique([companyId, sku])
+}
+
+model StockBalance {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  itemId     Int
+  locationId Int
+  qty        Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, itemId, locationId])
+}
+
+model StockThreshold {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  itemId     Int
+  locationId Int?
+  minQty     Int
+  isActive   Boolean  @default(true)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item     Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, itemId, locationId])
+}
+
+model Movement {
+  id               Int               @id @default(autoincrement())
+  companyId        Int
+  movementType     MovementType
+  itemId           Int
+  qty              Int
+  fromLocationId   Int?
+  toLocationId     Int?
+  counterpartyType CounterpartyType?
+  counterpartyName String?
+  referenceNo      String?
+  note             String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item         Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  fromLocation Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: Cascade)
+  toLocation   Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: Cascade)
+}
+
+model Reservation {
+  id           Int               @id @default(autoincrement())
+  companyId    Int
+  itemId       Int
+  locationId   Int
+  qty          Int
+  status       ReservationStatus @default(ACTIVE)
+  customerName String?
+  reference    String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  company  Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  item     Item           @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  qa       ReservationQa?
+}
+
+model OrderSequence {
+  id        Int      @id @default(autoincrement())
+  companyId Int      @unique
+  last      Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model ReservationQa {
+  id            Int     @id @default(autoincrement())
+  companyId     Int
+  reservationId Int     @unique
+  scannedQty    Int     @default(0)
+  note          String?
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([reservationId])
+}
